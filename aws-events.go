@@ -1,16 +1,23 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/elasticache"
 )
 
 const (
-	region = "ap-northeast-1"
+	region               = "ap-northeast-1"
+	default_duration_min = 60 * 24
+)
+
+var (
+	duration_min int64
 )
 
 func printInstanceName(svc *ec2.EC2, instanceId *string) (string, error) {
@@ -31,14 +38,18 @@ func printInstanceName(svc *ec2.EC2, instanceId *string) (string, error) {
 }
 
 func main() {
+	flag.Int64Var(&duration_min, "d", default_duration_min, "The number of minutes worth of events to retrieve.")
+	flag.Parse()
+
 	sess, err := session.NewSession(&aws.Config{Region: aws.String(region)})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	svc := ec2.New(sess)
+	ec2Svc := ec2.New(sess)
+	elasticacheSvc := elasticache.New(sess)
 
-	params := &ec2.DescribeInstanceStatusInput{
+	ec2Params := &ec2.DescribeInstanceStatusInput{
 		Filters: []*ec2.Filter{
 			{
 				Name: aws.String("event.code"),
@@ -52,14 +63,17 @@ func main() {
 			},
 		},
 	}
+	elasticacheParams := &elasticache.DescribeEventsInput{
+		Duration: &duration_min,
+	}
 
-	resp, err := svc.DescribeInstanceStatus(params)
+	ec2Resp, err := ec2Svc.DescribeInstanceStatus(ec2Params)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	for _, instance := range resp.InstanceStatuses {
-		name, err := printInstanceName(svc, instance.InstanceId)
+	for _, instance := range ec2Resp.InstanceStatuses {
+		name, err := printInstanceName(ec2Svc, instance.InstanceId)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -70,5 +84,13 @@ func main() {
 			}
 			fmt.Printf(": %v %v\n", *event.Code, *event.Description)
 		}
+	}
+
+	elasticacheResp, err := elasticacheSvc.DescribeEvents(elasticacheParams)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, event := range elasticacheResp.Events {
+		fmt.Printf("%v (%v): %v - %v\n", *event.SourceIdentifier, *event.SourceType, *event.Message, *event.Date)
 	}
 }
